@@ -1,4 +1,5 @@
-﻿using Microsoft.PowerBI.Api.V1;
+﻿using Microsoft.PowerBI.Api.V2;
+using Microsoft.PowerBI.Api.V2.Models;
 using Microsoft.PowerBI.Security;
 using Microsoft.Rest;
 using PbiPaasWebApi.Models;
@@ -8,6 +9,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Web.Http;
 using System.Web.Http.Cors;
+using Microsoft.IdentityModel.Clients.ActiveDirectory;
+
 
 namespace PbiPaasWebApi.Controllers
 {
@@ -15,40 +18,57 @@ namespace PbiPaasWebApi.Controllers
     [EnableCors(origins: "*", headers: "*", methods: "*")]
     public class ReportsController : ApiController
     {
-        private string workspaceCollectionName;
-        private Guid workspaceId;
-        private string workspaceCollectionAccessKey;
-        private string apiUrl;
+        private string Username;
+        private string Password;
+        private string AuthorityUrl;
+        private string ResourceUrl;
+        private string ClientId;
+        private string ApiUrl;
+        private string GroupId;
 
         public ReportsController()
         {
-            this.workspaceCollectionName = ConfigurationManager.AppSettings["powerbi:WorkspaceCollectionName"];
-            this.workspaceId = Guid.Parse(ConfigurationManager.AppSettings["powerbi:WorkspaceId"]);
-            this.workspaceCollectionAccessKey = ConfigurationManager.AppSettings["powerbi:WorkspaceCollectionAccessKey"];
-            this.apiUrl = ConfigurationManager.AppSettings["powerbi:ApiUrl"];
+            this.Username = ConfigurationManager.AppSettings["pbiUsername"];
+            this.Password = ConfigurationManager.AppSettings["pbiPassword"];
+            this.AuthorityUrl = ConfigurationManager.AppSettings["authorityUrl"];
+            this.ResourceUrl = ConfigurationManager.AppSettings["resourceUrl"];
+            this.ClientId = ConfigurationManager.AppSettings["clientId"];
+            this.ApiUrl = ConfigurationManager.AppSettings["apiUrl"];
+            this.GroupId = ConfigurationManager.AppSettings["groupId"];
         }
         // GET: api/Reports
         [HttpGet]
         public async Task<IHttpActionResult> Get([FromUri]bool includeTokens = false)
         {
-            var credentials = new TokenCredentials(workspaceCollectionAccessKey, "AppKey");
-            using (var client = new PowerBIClient(new Uri(apiUrl), credentials))
+            // Create a user password cradentials.
+            var credential = new UserPasswordCredential(Username, Password);
+
+            // Authenticate using created credentials
+            var authenticationContext = new AuthenticationContext(AuthorityUrl);
+            var authenticationResult = await authenticationContext.AcquireTokenAsync(ResourceUrl, ClientId, credential);
+            var tokenCredentials = new TokenCredentials(authenticationResult.AccessToken, "Bearer");
+
+            using (var client = new PowerBIClient(new Uri(ApiUrl), tokenCredentials))
             {
-                var reportsResponse = await client.Reports.GetReportsAsync(this.workspaceCollectionName, this.workspaceId.ToString());
-                var reportsWithTokens = reportsResponse.Value
+                // Get a list of reports.
+                var reports = await client.Reports.GetReportsInGroupAsync(GroupId);
+
+                var reportsWithTokens = reports.Value
                     .Select(report =>
                     {
                         string accessToken = null;
-                        if(includeTokens)
+                        if (includeTokens)
                         {
-                            var embedToken = PowerBIToken.CreateReportEmbedToken(this.workspaceCollectionName, this.workspaceId.ToString(), report.Id);
-                            accessToken = embedToken.Generate(this.workspaceCollectionAccessKey);
+                            // Generate Embed Token for reports without effective identities.
+                            GenerateTokenRequest generateTokenRequestParameters;
+                            generateTokenRequestParameters = new GenerateTokenRequest(accessLevel: "view");
+                            var tokenResponse = client.Reports.GenerateTokenInGroupAsync(GroupId, report.Id, generateTokenRequestParameters).Result;
+                            accessToken = tokenResponse.Token;
                         }
 
                         return new ReportWithToken(report, accessToken);
-                    })
-                    .ToList();
-
+                    }).ToList();
+                
                 return Ok(reportsWithTokens);
             }
         }
@@ -57,24 +77,32 @@ namespace PbiPaasWebApi.Controllers
         [HttpGet]
         public async Task<IHttpActionResult> Get(string id)
         {
-            var credentials = new TokenCredentials(workspaceCollectionAccessKey, "AppKey");
-            using (var client = new PowerBIClient(new Uri(apiUrl), credentials))
-            {
-                var reportsResponse = await client.Reports.GetReportsAsync(this.workspaceCollectionName, this.workspaceId.ToString());
-                var report = reportsResponse.Value.FirstOrDefault(r => r.Id == id);
-                if(report == null)
-                {
-                    return BadRequest($"No reports were found matching the id: {id}");
-                }
+            // Create a user password cradentials.
+            var credential = new UserPasswordCredential(Username, Password);
 
-                var embedToken = PowerBIToken.CreateReportEmbedToken(workspaceCollectionName, workspaceId.ToString(), report.Id);
-                var accessToken = embedToken.Generate(workspaceCollectionAccessKey);
-                var reportWithToken = new ReportWithToken(report, accessToken);
+            // Authenticate using created credentials
+            var authenticationContext = new AuthenticationContext(AuthorityUrl);
+            var authenticationResult = await authenticationContext.AcquireTokenAsync(ResourceUrl, ClientId, credential);
+            var tokenCredentials = new TokenCredentials(authenticationResult.AccessToken, "Bearer");
+
+            using (var client = new PowerBIClient(new Uri(ApiUrl), tokenCredentials))
+            {
+                // Get a list of reports.
+                var reports = await client.Reports.GetReportsInGroupAsync(GroupId);
+
+                var report = reports.Value.FirstOrDefault(r => r.Id == id);
+                
+                // Generate Embed Token for reports without effective identities.
+                GenerateTokenRequest generateTokenRequestParameters;
+                generateTokenRequestParameters = new GenerateTokenRequest(accessLevel: "view");
+                var tokenResponse = await client.Reports.GenerateTokenInGroupAsync(GroupId, report.Id, generateTokenRequestParameters);
+
+                var reportWithToken = new ReportWithToken(report, tokenResponse.Token);
 
                 return Ok(reportWithToken);
             }
         }
-
+        /*
         [HttpGet]
         public async Task<IHttpActionResult> SearchByName([FromUri]string query, [FromUri]bool includeTokens = false)
         {
@@ -106,5 +134,6 @@ namespace PbiPaasWebApi.Controllers
                 return Ok(reportsWithTokens);
             }
         }
+        */
     }
 }
