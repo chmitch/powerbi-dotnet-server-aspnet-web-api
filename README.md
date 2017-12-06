@@ -18,9 +18,10 @@ You must have a workspace collection provisioned in azure.  For infromation abou
 2. Set properties in Web.config from Azure Portal.
 
 	```
-	<add key="powerbi:WorkspaceCollectionName" value="[your workspace collection name]" />
-	<add key="powerbi:WorkspaceCollectionAccessKey" value="[your workspace collection access key]" />
-	<add key="powerbi:WorkspaceId" value="[workspace id containing your reports]" />
+	<add key="clientId" value="" />
+	<add key="groupId" value="" />
+    	<add key="pbiUsername" value="" />
+    	<add key="pbiPassword" value="" />
 	```
 
 3. Build and Run solution 
